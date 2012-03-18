@@ -1,0 +1,204 @@
+#!/bin/env sh
+
+# Script for managing FreeSWITCH environments. Defaults are for Redhat-type systems.
+# Run with no arguments for usage.
+
+#########################
+# CONFIG
+#########################
+
+# Root directory for FreeSWITCH installations.
+ENV_ROOT=${ENV_ROOT-/usr/local}
+# Root directory for FreeSWITCH source files.
+SRC_ROOT=${SRC_ROOT-/usr/local/src/freeswitch}
+
+# Extra arguments to pass to configure (note that --prefix is handled
+# automatically)
+CONFIGURE_ARGS=${CONFIGURE_ARGS---without-libcurl}
+# Type of init script to install. This should match the suffix of
+# build/freeswitch.init.[name]
+# Set to empty to disable init script installation.
+INIT_SCRIPT_TYPE=${INIT_SCRIPT_TYPE-redhat}
+
+# Configuration for sysconfig file.
+# Directory where sysconfig file is located.
+SYSCONFIG_DIR=${SYSCONFIG_DIR-/etc/sysconfig}
+# Arguments to pass to the freeswitch executable.
+FREESWITCH_PARAMS=${FREESWITCH_PARAMS--waste -nonat}
+# User to run FreeSWITCH as.
+FREESWITCH_USER=${FREESWITCH_USER-voip}
+
+#########################
+# END CONFIG
+#########################
+
+usage() {
+  echo "
+Usage: freeswitch-env <install|uninstall|list> <env-name>
+  env-name: The name of the envelope to create. Will be appended to
+  'freeswitch-' to create the final envelope name
+"
+}
+
+remove_dir() {
+  local DIR BASE_DIR
+  DIR=$1
+  BASE_DIR=`dirname $DIR`
+  if [ -d $DIR ] && [ "$BASE_DIR" = "$ENV_ROOT" ]; then
+    echo "Removing directory $DIR"
+    rm -rf $DIR
+  fi
+}
+
+remove_file() {
+  local FILE
+  FILE=$1
+  if [ -f $FILE ] || [ -h $FILE ]; then
+    echo "Removing file $FILE"
+    rm $FILE
+  fi
+}
+
+CWD=`pwd`
+COMMAND=$1
+ENV_SUFFIX=$2
+
+# Build the envelope paths.
+ENV_NAME=freeswitch-$ENV_SUFFIX
+FREESWITCH_ENV=$ENV_ROOT/$ENV_NAME
+
+if [ $# -lt 1 ]; then
+  usage
+  exit 1
+fi
+
+if [ "$COMMAND" != "list" ] && [ "$ENV_SUFFIX" == "" ]; then
+  echo "ERROR: env-name is required."
+  usage
+  exit 1
+fi
+
+install_init_script() {
+  INIT_FILE="/etc/init.d/$ENV_NAME"
+  echo "Installing $INIT_FILE"
+  cp $SRC_ROOT/build/freeswitch.init.${INIT_SCRIPT_TYPE} $INIT_FILE
+  chmod 755 $INIT_FILE
+  sed "s#${SYSCONFIG_DIR}/freeswitch#${SYSCONFIG_DIR}/${ENV_NAME}#" -i $INIT_FILE
+}
+
+install_sysconfig() {
+  echo "Installing sysconfig file"
+  echo "## Type:                string" > /etc/sysconfig/$ENV_NAME
+  echo "## Default:             \"\"" >> /etc/sysconfig/$ENV_NAME
+  echo "## Config:              \"\"" >> /etc/sysconfig/$ENV_NAME
+  echo "## ServiceRestart:      $ENV_NAME" >> /etc/sysconfig/$ENV_NAME
+  echo "#" >> /etc/sysconfig/$ENV_NAME
+  echo "# if not empty: parameters for freeswitch" >> /etc/sysconfig/$ENV_NAME
+  echo "#" >> /etc/sysconfig/$ENV_NAME
+  echo "FREESWITCH_PARAMS=\"$FREESWITCH_PARAMS\"" >> /etc/sysconfig/$ENV_NAME
+  echo "PID_FILE=$FREESWITCH_ENV/run/freeswitch.pid" >> /etc/sysconfig/$ENV_NAME
+  echo "FS_USER=$FREESWITCH_USER" >> /etc/sysconfig/$ENV_NAME
+  echo "FS_FILE=$FREESWITCH_ENV/bin/freeswitch" >> /etc/sysconfig/$ENV_NAME
+  echo "FS_HOME=$FREESWITCH_ENV" >> /etc/sysconfig/$ENV_NAME
+  echo "" >> /etc/sysconfig/$ENV_NAME
+}
+
+output_fs_cli_conf() {
+  echo "
+Example entry to be placed in .fs_cli_conf for easy CLI access:
+
+[${ENV_SUFFIX}]
+host     => localhost
+port     => 8021
+password => ClueCon
+loglevel => info
+"
+}
+
+install() {
+  echo "Installing new environment in $FREESWITCH_ENV"
+  cd $SRC_ROOT
+  CONFIGURE_COMMAND="./configure --prefix=$FREESWITCH_ENV $CONFIGURE_ARGS"
+  echo "Running $CONFIGURE_COMMAND"
+  $CONFIGURE_COMMAND
+  RETVAL=$?
+  if [ $RETVAL -eq 0 ]; then
+    echo "Running make"
+    make
+    RETVAL=$?
+    if [ $RETVAL -eq 0 ]; then
+      echo "Installing to $FREESWITCH_ENV"
+      make install
+      RETVAL=$?
+      if [ $RETVAL -eq 0 ]; then
+        echo "Installing sounds to $FREESWITCH_ENV"
+        make sounds-install
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+          echo "Installing MOH to $FREESWITCH_ENV"
+          make moh-install
+          RETVAL=$?
+          if [ $RETVAL -eq 0 ]; then
+            echo "Installing config"
+            make samples
+            RETVAL=$?
+            if [ $RETVAL -eq 0 ]; then
+              echo "Setting ownership of $FREESWITCH_ENV to $FREESWITCH_USER"
+              chown -R ${FREESWITCH_USER}:${FREESWITCH_USER} $FREESWITCH_ENV
+              RETVAL=$?
+              if [ $RETVAL -eq 0 ]; then
+                if [ "$INIT_SCRIPT_TYPE" != "" ]; then
+                  install_init_script
+                  install_sysconfig
+                fi
+                output_fs_cli_conf
+              fi
+            fi
+          fi
+        fi
+      fi
+    fi
+  fi
+  if [ $RETVAL -ne 0 ]; then
+    echo "ERROR installing environment in $FREESWITCH_ENV"
+  fi
+  cd $CWD
+  return $RETVAL
+}
+
+uninstall() {
+  remove_file /etc/init.d/$ENV_NAME
+  remove_file $SYSCONFIG_DIR/$ENV_NAME
+  remove_dir $FREESWITCH_ENV
+}
+
+list() {
+  ENV_LIST=`ls -1 /etc/sysconfig/freeswitch-* 2> /dev/null | cut -f 4 -d "/" | cut -f 2- -d "-"`
+  echo "
+Currently installed environments:
+
+$ENV_LIST
+"
+}
+
+case "$COMMAND" in
+  install)
+    install
+    RETVAL=$?
+    ;;
+  uninstall)
+    uninstall
+    RETVAL=0
+    ;;
+  list)
+    list
+    RETVAL=0
+    ;;
+  *)
+    usage
+    RETVAL=1
+    ;;
+esac
+
+exit $RETVAL
+
