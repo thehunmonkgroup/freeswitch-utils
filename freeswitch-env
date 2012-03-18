@@ -20,6 +20,7 @@ CONFIGURE_ARGS=${CONFIGURE_ARGS---without-libcurl}
 # Set to empty to disable init script installation.
 INIT_SCRIPT_TYPE=${INIT_SCRIPT_TYPE-redhat}
 
+# TODO: No idea if the init script stuff works for platforms other than redhat.
 # Configuration for sysconfig file.
 # Directory where sysconfig file is located.
 SYSCONFIG_DIR=${SYSCONFIG_DIR-/etc/sysconfig}
