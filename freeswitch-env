@@ -119,6 +119,10 @@ loglevel => info
 install() {
   echo "Installing new environment in $FREESWITCH_ENV"
   cd $SRC_ROOT
+  if [ ! -x ./configure ]; then
+    echo "$SRC_ROOT has no configure command -- running bootstrap.sh"
+    ./bootstrap.sh
+  fi
   CONFIGURE_COMMAND="./configure --prefix=$FREESWITCH_ENV $CONFIGURE_ARGS"
   echo "Running $CONFIGURE_COMMAND"
   $CONFIGURE_COMMAND
