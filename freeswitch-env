@@ -1,4 +1,4 @@
-#!/bin/env sh
+#!/usr/bin/env sh
 
 # Script for managing FreeSWITCH environments. Defaults are for Redhat-type systems.
 # Run with no arguments for usage.
@@ -60,6 +60,7 @@ remove_file() {
   fi
 }
 
+PLATFORM=`uname -s`
 CWD=`pwd`
 COMMAND=$1
 ENV_SUFFIX=$2
@@ -117,6 +118,16 @@ loglevel => info
 }
 
 install() {
+  if [ "$PLATFORM" = "Darwin" ]; then
+    # Most likely a MacPorts install, offer up the lib/include dir to satisfy
+    # the FreeSWITCH dependency on libjpeg.
+    if [ -d /opt/local ]; then
+      echo "MacPorts installation detected."
+      export LDFLAGS="$LDFLAGS -L/opt/local/lib"
+      export CFLAGS="$CFLAGS -I/opt/local/include"
+      echo "exported LDFLAGS=\"${LDFLAGS}\" CFLAGS=\"${CFLAGS}\""
+    fi
+  fi
   echo "Installing new environment in $FREESWITCH_ENV"
   cd $SRC_ROOT
   if [ ! -x ./configure ]; then
@@ -149,10 +160,11 @@ install() {
             RETVAL=$?
             if [ $RETVAL -eq 0 ]; then
               echo "Setting ownership of $FREESWITCH_ENV to $FREESWITCH_USER"
-              chown -R ${FREESWITCH_USER}:${FREESWITCH_USER} $FREESWITCH_ENV
+              chown -R ${FREESWITCH_USER} $FREESWITCH_ENV
               RETVAL=$?
               if [ $RETVAL -eq 0 ]; then
-                if [ "$INIT_SCRIPT_TYPE" != "" ]; then
+                # Skip init scripts on OS X.
+                if [ "$INIT_SCRIPT_TYPE" != "" ] && [ "$PLATFORM" != "Darwin" ]; then
                   install_init_script
                   install_sysconfig
                 fi
@@ -178,7 +190,9 @@ uninstall() {
 }
 
 list() {
-  ENV_LIST=`ls -1 /etc/sysconfig/freeswitch-* 2> /dev/null | cut -f 4 -d "/" | cut -f 2- -d "-"`
+  cd $ENV_ROOT
+  ENV_LIST=`ls -1 -p -d freeswitch-*/ | sed -e 's#^freeswitch-\(.*\)//$#\1#g'`
+  cd $CWD
   echo "
 Currently installed environments:
 
